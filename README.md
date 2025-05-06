@@ -27,7 +27,6 @@ This will create a `config/pinert.php` configuration file.
 Add these variables to your `.env` file:
 
 ```
-# Slack Error Notifications
 SLACK_ERROR_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 SLACK_ERROR_CHANNEL=
 SLACK_ERROR_USERNAME="Error Reporter"
@@ -39,11 +38,31 @@ SLACK_ERROR_ICON=:rotating_light:
 You can further customize the behavior by setting these environment variables:
 
 ```
-# Slack Error Notifications - Advanced Settings
 SLACK_ERROR_MAX_STACK_TRACE_LINES=5
 SLACK_ERROR_MIN_LEVEL=error
 SLACK_ERROR_ENVIRONMENTS=production,staging
 SLACK_ERROR_RATE_LIMIT=60
+```
+
+## Usage
+
+### Automatic Error Reporting
+
+Once installed and configured, Pinert will automatically send notifications to Slack whenever a reportable exception occurs in your application.
+
+### Manual Error Reporting
+
+You can also report exceptions manually:
+
+```php
+use Dennenboom\Pinert\Facades\Pinert;
+
+try {
+    // Your code that might throw an exception
+} catch (\Throwable $e) {
+    // Manually report to Slack
+    Pinert::reportToSlack($e, request()->all());
+}
 ```
 
 ## License
