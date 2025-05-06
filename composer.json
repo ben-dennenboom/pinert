@@ -1,0 +1,34 @@
+{
+    "name": "dennenboom/pinert",
+    "description": "When errors arise, Pinert notifies.",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Dennenboom\\Pinert\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Ayoub",
+            "email": "ayoub.ezzini@gmail.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "require": {
+        "php": "^8.0",
+        "illuminate/support": "^9.0|^10.0|^11.0|^12.0",
+        "illuminate/notifications": "^9.0|^10.0|^11.0|^12.0"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Dennenboom\\Pinert\\Providers\\PinertServiceProvider"
+            ],
+            "aliases": {
+                "Pinert": "Dennenboom\\Pinert\\Facades\\Pinert"
+            }
+        }
+    }
+}
