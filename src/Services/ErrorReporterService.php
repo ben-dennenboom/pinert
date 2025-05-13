@@ -65,32 +65,7 @@ class ErrorReporterService
             return false;
         }
 
-        if (method_exists($exception, 'getCode') && is_numeric($exception->getCode())) {
-            $errorCode = $exception->getCode();
-            $minLevel = $this->getLogLevelCode($this->minLevel);
-
-            if ($errorCode < $minLevel) {
-                return false;
-            }
-        }
-
         return true;
-    }
-
-    protected function getLogLevelCode(string $level): int
-    {
-        $levels = [
-            'debug'     => 100,
-            'info'      => 200,
-            'notice'    => 250,
-            'warning'   => 300,
-            'error'     => 400,
-            'critical'  => 500,
-            'alert'     => 550,
-            'emergency' => 600,
-        ];
-
-        return $levels[strtolower($level)] ?? 0;
     }
 
     protected function isRateLimited(Throwable $exception): bool
