@@ -19,7 +19,7 @@ class ErrorReporterService
 
     public function __construct()
     {
-        $this->webhookUrl = config('pinert.webhook_url');
+        $this->webhookUrl = config('pinert.webhook_url') ?? '';
         $this->excludedExceptions = config('pinert.exclude_exceptions', []);
         $this->rateLimitSeconds = config('pinert.rate_limit_seconds', 60);
         $this->environments = config('pinert.environments', []);
