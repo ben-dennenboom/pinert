@@ -54,8 +54,12 @@ class ErrorReporterService
 
     public function shouldReport(Throwable $exception): bool
     {
-        foreach ($this->excludedExceptions as $excludedClass) {
-            if ($exception instanceof $excludedClass) {
+        foreach ($this->excludedExceptions as $excluded) {
+            if (is_callable($excluded) && $excluded($exception)) {
+                return false;
+            }
+
+            if (is_string($excluded) && $exception instanceof $excluded) {
                 return false;
             }
         }

@@ -93,6 +93,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | A list of exception types that should not be reported to Slack.
+    | Each entry can be a class name string or a callable that receives the
+    | exception and returns true to exclude it.
     |
     */
     'exclude_exceptions'    => [
