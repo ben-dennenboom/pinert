@@ -14,6 +14,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | TaskBoard
+    |--------------------------------------------------------------------------
+    |
+    | Send errors to TaskBoard, where each new error becomes a bug in the
+    | project's backlog and repeats are counted on the open bug. Create a
+    | "For Pinert" token on TaskBoard's API Tokens page to get the URL and key.
+    |
+    */
+    'taskboard_url'               => env('PINERT_TASKBOARD_URL'),
+
+    'taskboard_key'               => env('PINERT_TASKBOARD_KEY'),
+
+    'taskboard_stack_trace_lines' => env('PINERT_TASKBOARD_STACK_TRACE_LINES', 20),
+
+    /*
+    |--------------------------------------------------------------------------
     | Project Name
     |--------------------------------------------------------------------------
     |

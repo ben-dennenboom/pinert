@@ -8,6 +8,7 @@ use Throwable;
 
 /**
  * @method static bool shouldReport(Throwable $exception)
+ * @method static void report(Throwable $exception, ?array $request = null)
  * @method static void reportToSlack(Throwable $exception, ?array $request = null)
  *
  * @see ErrorReporterService
