@@ -11,6 +11,8 @@ use Throwable;
 class ErrorReporterService
 {
     protected string $webhookUrl;
+    protected string $taskBoardUrl;
+    protected string $taskBoardKey;
     protected array $excludedExceptions;
     protected int $rateLimitSeconds;
     protected array $environments;
@@ -20,6 +22,8 @@ class ErrorReporterService
     public function __construct()
     {
         $this->webhookUrl = config('pinert.webhook_url') ?? '';
+        $this->taskBoardUrl = config('pinert.taskboard_url') ?? '';
+        $this->taskBoardKey = config('pinert.taskboard_key') ?? '';
         $this->excludedExceptions = config('pinert.exclude_exceptions', []);
         $this->rateLimitSeconds = config('pinert.rate_limit_seconds', 60);
         $this->environments = config('pinert.environments', []);
@@ -27,10 +31,10 @@ class ErrorReporterService
         $this->projectName = config('pinert.project_name');
     }
 
-    public function reportToSlack(Throwable $exception, ?array $request = null): void
+    public function report(Throwable $exception, ?array $request = null): void
     {
         try {
-            if (empty($this->webhookUrl)) {
+            if (!$this->hasSlack() && !$this->hasTaskBoard()) {
                 return;
             }
 
@@ -42,13 +46,47 @@ class ErrorReporterService
                 return;
             }
 
-            $payload = $this->prepareSlackPayload($exception, $request);
+            if ($this->hasSlack()) {
+                $this->safely('Slack', fn () => $this->sendToSlack($this->prepareSlackPayload($exception, $request)));
+            }
 
-            $this->sendToSlack($payload);
+            if ($this->hasTaskBoard()) {
+                $this->safely('TaskBoard', fn () => $this->sendToTaskBoard($this->prepareTaskBoardPayload($exception, $request)));
+            }
 
             $this->recordNotification($exception);
         } catch (Throwable $e) {
-            Log::error('Failed to send error notification to Slack: ' . $e->getMessage());
+            Log::error('Failed to send error notification: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @deprecated Use report(), which also sends to TaskBoard when configured.
+     */
+    public function reportToSlack(Throwable $exception, ?array $request = null): void
+    {
+        $this->report($exception, $request);
+    }
+
+    protected function hasSlack(): bool
+    {
+        return !empty($this->webhookUrl);
+    }
+
+    protected function hasTaskBoard(): bool
+    {
+        return !empty($this->taskBoardUrl) && !empty($this->taskBoardKey);
+    }
+
+    /**
+     * A failing channel must not keep the other one from receiving the error.
+     */
+    protected function safely(string $channel, callable $send): void
+    {
+        try {
+            $send();
+        } catch (Throwable $e) {
+            Log::error("Failed to send error notification to {$channel}: " . $e->getMessage());
         }
     }
 
@@ -186,9 +224,54 @@ class ErrorReporterService
         return $payload;
     }
 
-    protected function getFormattedTrace(Throwable $exception): string
+    protected function prepareTaskBoardPayload(Throwable $exception, ?array $request = null): array
     {
-        $maxLines = config('pinert.max_stack_trace_lines', 5);
+        $request = $request ?? Request::all();
+        $file = $this->relativePath($exception->getFile());
+        $userId = Auth::id();
+
+        return [
+            'exception'    => get_class($exception),
+            'message'      => mb_substr($exception->getMessage(), 0, 5000),
+            'file'         => $file,
+            'line'         => $exception->getLine(),
+            'environment'  => app()->environment(),
+            'url'          => app()->runningInConsole() ? null : mb_substr(Request::fullUrl(), 0, 2000),
+            'method'       => app()->runningInConsole() ? null : Request::method(),
+            'user_id'      => $userId === null ? null : (string) $userId,
+            'trace'        => $this->getFormattedTrace($exception, config('pinert.taskboard_stack_trace_lines', 20)) ?: null,
+            'request_data' => empty($request) ? null : $this->formatRequestData($request),
+            'fingerprint'  => $this->getFingerprint($exception),
+            'occurred_at'  => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Identifies "the same error" so TaskBoard can group repeats on one bug.
+     * The message is left out because it often holds ids, and the path is
+     * relative so a new release directory doesn't change the fingerprint.
+     */
+    protected function getFingerprint(Throwable $exception): string
+    {
+        $class = get_class($exception);
+        $file = $this->relativePath($exception->getFile());
+        $line = $exception->getLine();
+
+        return hash('sha256', "{$class}|{$file}|{$line}");
+    }
+
+    protected function relativePath(string $file): string
+    {
+        if (strpos($file, base_path()) !== 0) {
+            return $file;
+        }
+
+        return ltrim(substr($file, strlen(base_path())), '/');
+    }
+
+    protected function getFormattedTrace(Throwable $exception, ?int $maxLines = null): string
+    {
+        $maxLines = $maxLines ?? (int) config('pinert.max_stack_trace_lines', 5);
 
         if ($maxLines <= 0) {
             return '';
@@ -209,12 +292,7 @@ class ErrorReporterService
             $file = $t['file'] ?? 'unknown';
             $line = $t['line'] ?? 0;
 
-            if (strpos($file, base_path()) === 0) {
-                $file = str_replace(base_path(), '', $file);
-                if (strpos($file, '/') === 0) {
-                    $file = substr($file, 1);
-                }
-            }
+            $file = $this->relativePath($file);
 
             $traceLines[] = "#{$count} {$file}({$line}): {$class}{$type}{$function}()";
             $count++;
@@ -263,6 +341,41 @@ class ErrorReporterService
         }
 
         curl_close($ch);
+    }
+
+    protected function sendToTaskBoard(array $payload): void
+    {
+        $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+
+        $ch = curl_init($this->taskBoardUrl);
+
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            "Authorization: Bearer {$this->taskBoardKey}",
+            'Content-Length: ' . strlen($body),
+        ]);
+
+        $result = curl_exec($ch);
+        $error = curl_error($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        curl_close($ch);
+
+        if ($error) {
+            Log::error("cURL Error when sending to TaskBoard: {$error}");
+
+            return;
+        }
+
+        if ($status >= 400) {
+            Log::error("TaskBoard rejected the error notification ({$status}): " . substr((string) $result, 0, 500));
+        }
     }
 
     protected function recordNotification(Throwable $exception): void

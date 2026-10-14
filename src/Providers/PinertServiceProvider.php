@@ -24,7 +24,7 @@ class PinertServiceProvider extends ServiceProvider
                 $reporter = $app->make(ErrorReporterService::class);
 
                 if ($reporter->shouldReport($e)) {
-                    $reporter->reportToSlack($e, request()->all());
+                    $reporter->report($e, request()->all());
 
                     return true;
                 }
