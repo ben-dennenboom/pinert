@@ -138,7 +138,7 @@ class ErrorReporterService
         $url = Request::fullUrl();
         $method = Request::method();
         $userIp = Request::ip();
-        $userAgent = Request::header('User-Agent');
+        $userAgent = (string) Request::header('User-Agent');
         $userId = Auth::id() ?? 'Guest';
 
         $exceptionClass = get_class($exception);
@@ -339,8 +339,6 @@ class ErrorReporterService
         if ($error) {
             Log::error("cURL Error when sending to Slack: {$error}");
         }
-
-        curl_close($ch);
     }
 
     protected function sendToTaskBoard(array $payload): void
@@ -364,8 +362,6 @@ class ErrorReporterService
         $result = curl_exec($ch);
         $error = curl_error($ch);
         $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-        curl_close($ch);
 
         if ($error) {
             Log::error("cURL Error when sending to TaskBoard: {$error}");

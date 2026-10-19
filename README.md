@@ -2,6 +2,11 @@
 
 Pinert or Pine Alert is a Laravel package that sends detailed error notifications to Slack when exceptions occur in your Laravel applications. Perfect for multiple project environments where you need to monitor errors across different applications using the same Slack webhook.
 
+## Requirements
+
+- PHP 8.0 or higher (tested up to PHP 8.5)
+- Laravel 9, 10, 11, 12 or 13
+
 ## Installation
 
 You can install the package via composer:
