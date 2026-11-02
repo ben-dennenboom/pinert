@@ -19,7 +19,17 @@ class PinertServiceProvider extends ServiceProvider
             return new ErrorReporterService();
         });
 
-        $this->app->extend(ExceptionHandler::class, function ($handler, $app) {
+        // Packages that wrap the handler, such as Collision in the console, make
+        // this extender run again. A second callback would count errors twice.
+        $isRegistered = false;
+
+        $this->app->extend(ExceptionHandler::class, function ($handler, $app) use (&$isRegistered) {
+            if ($isRegistered) {
+                return $handler;
+            }
+
+            $isRegistered = true;
+
             $handler->reportable(function (\Throwable $e) use ($app) {
                 $reporter = $app->make(ErrorReporterService::class);
 

@@ -50,7 +50,18 @@ PINERT_TASKBOARD_KEY=your-project-key
 PINERT_TASKBOARD_STACK_TRACE_LINES=20
 ```
 
-Slack and TaskBoard can be used together or on their own.
+### Health Monitor
+
+Pinert can also report errors to Health Monitor, which counts unique errors and how often they occur, and shows them on the project's dashboard card. Generate a token on the project's **Errors** tab, then add these values to your `.env`:
+
+```
+PINERT_MONITOR_URL=https://your-monitor.test/api/error-reports
+PINERT_MONITOR_TOKEN=your-project-token
+```
+
+No request data or stack trace is sent. Occurrences held back by the rate limit are sent along with the next report of that error.
+
+Slack, TaskBoard and Health Monitor can be used together or on their own. When TaskBoard and Slack are both set up, the Slack message links to the ticket.
 
 ### Advanced Configuration
 
@@ -67,7 +78,7 @@ SLACK_ERROR_RATE_LIMIT=60
 
 ### Automatic Error Reporting
 
-Once installed and configured, Pinert will automatically send notifications to Slack and/or TaskBoard whenever a reportable exception occurs in your application.
+Once installed and configured, Pinert will automatically send notifications to Slack, TaskBoard and/or Health Monitor whenever a reportable exception occurs in your application.
 
 ### Manual Error Reporting
 
@@ -79,7 +90,7 @@ use Dennenboom\Pinert\Facades\Pinert;
 try {
     // Your code that might throw an exception
 } catch (\Throwable $e) {
-    // Manually report to Slack and/or TaskBoard
+    // Manually report to Slack, TaskBoard and/or Health Monitor
     Pinert::report($e, request()->all());
 }
 ```

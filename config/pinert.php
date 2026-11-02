@@ -30,6 +30,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Health Monitor
+    |--------------------------------------------------------------------------
+    |
+    | Report errors to Health Monitor, which counts unique errors and how often
+    | they occur per project. Generate a token on the project's Errors tab.
+    | No request data or stack trace is sent.
+    |
+    */
+    'monitor_url'                 => env('PINERT_MONITOR_URL'),
+
+    'monitor_token'               => env('PINERT_MONITOR_TOKEN'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Project Name
     |--------------------------------------------------------------------------
     |
