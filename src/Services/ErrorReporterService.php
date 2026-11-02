@@ -13,6 +13,8 @@ class ErrorReporterService
     protected string $webhookUrl;
     protected string $taskBoardUrl;
     protected string $taskBoardKey;
+    protected string $monitorUrl;
+    protected string $monitorToken;
     protected array $excludedExceptions;
     protected int $rateLimitSeconds;
     protected array $environments;
@@ -24,6 +26,8 @@ class ErrorReporterService
         $this->webhookUrl = config('pinert.webhook_url') ?? '';
         $this->taskBoardUrl = config('pinert.taskboard_url') ?? '';
         $this->taskBoardKey = config('pinert.taskboard_key') ?? '';
+        $this->monitorUrl = config('pinert.monitor_url') ?? '';
+        $this->monitorToken = config('pinert.monitor_token') ?? '';
         $this->excludedExceptions = config('pinert.exclude_exceptions', []);
         $this->rateLimitSeconds = config('pinert.rate_limit_seconds', 60);
         $this->environments = config('pinert.environments', []);
@@ -34,7 +38,7 @@ class ErrorReporterService
     public function report(Throwable $exception, ?array $request = null): void
     {
         try {
-            if (!$this->hasSlack() && !$this->hasTaskBoard()) {
+            if (!$this->hasSlack() && !$this->hasTaskBoard() && !$this->hasMonitor()) {
                 return;
             }
 
@@ -43,15 +47,23 @@ class ErrorReporterService
             }
 
             if ($this->isRateLimited($exception)) {
+                $this->countHeldBackOccurrence($exception);
+
                 return;
             }
 
-            if ($this->hasSlack()) {
-                $this->safely('Slack', fn () => $this->sendToSlack($this->prepareSlackPayload($exception, $request)));
-            }
+            $ticket = null;
 
             if ($this->hasTaskBoard()) {
-                $this->safely('TaskBoard', fn () => $this->sendToTaskBoard($this->prepareTaskBoardPayload($exception, $request)));
+                $ticket = $this->safely('TaskBoard', fn () => $this->sendToTaskBoard($this->prepareTaskBoardPayload($exception, $request)));
+            }
+
+            if ($this->hasSlack()) {
+                $this->safely('Slack', fn () => $this->sendToSlack($this->prepareSlackPayload($exception, $request, $ticket)));
+            }
+
+            if ($this->hasMonitor()) {
+                $this->safely('Health Monitor', fn () => $this->sendToMonitor($this->prepareMonitorPayload($exception)));
             }
 
             $this->recordNotification($exception);
@@ -78,15 +90,22 @@ class ErrorReporterService
         return !empty($this->taskBoardUrl) && !empty($this->taskBoardKey);
     }
 
+    protected function hasMonitor(): bool
+    {
+        return !empty($this->monitorUrl) && !empty($this->monitorToken);
+    }
+
     /**
-     * A failing channel must not keep the other one from receiving the error.
+     * A failing channel must not keep the others from receiving the error.
      */
-    protected function safely(string $channel, callable $send): void
+    protected function safely(string $channel, callable $send)
     {
         try {
-            $send();
+            return $send();
         } catch (Throwable $e) {
             Log::error("Failed to send error notification to {$channel}: " . $e->getMessage());
+
+            return null;
         }
     }
 
@@ -131,7 +150,28 @@ class ErrorReporterService
         return 'slack_error_notifier:' . md5("{$class}:{$message}:{$file}:{$line}");
     }
 
-    protected function prepareSlackPayload(Throwable $exception, ?array $request = null): array
+    /**
+     * The rate limit keeps Slack quiet, but the monitor counts how often an
+     * error happens, so occurrences held back are sent along with the next report.
+     */
+    protected function countHeldBackOccurrence(Throwable $exception): void
+    {
+        if (!$this->hasMonitor()) {
+            return;
+        }
+
+        $key = $this->getHeldBackKey($exception);
+
+        Cache::add($key, 0, now()->addDay());
+        Cache::increment($key);
+    }
+
+    protected function getHeldBackKey(Throwable $exception): string
+    {
+        return 'pinert_held_back:' . $this->getFingerprint($exception);
+    }
+
+    protected function prepareSlackPayload(Throwable $exception, ?array $request = null, ?array $ticket = null): array
     {
         $request = $request ?? Request::all();
         $environment = app()->environment();
@@ -199,6 +239,16 @@ class ErrorReporterService
             ],
         ];
 
+        if (!empty($ticket['url'])) {
+            $label = $ticket['identifier'] ?? 'View ticket';
+
+            $payload['attachments'][0]['fields'][] = [
+                'title' => 'Ticket',
+                'value' => "<{$ticket['url']}|{$label}>",
+                'short' => true,
+            ];
+        }
+
         $payload['attachments'][0]['fields'][] = [
             'title' => 'User Agent',
             'value' => substr($userAgent, 0, 100) . (strlen($userAgent) > 100 ? '...' : ''),
@@ -246,8 +296,22 @@ class ErrorReporterService
         ];
     }
 
+    protected function prepareMonitorPayload(Throwable $exception): array
+    {
+        return [
+            'exception'   => mb_substr(get_class($exception), 0, 255),
+            'message'     => mb_substr($exception->getMessage(), 0, 5000),
+            'file'        => mb_substr($this->relativePath($exception->getFile()), 0, 1000),
+            'line'        => $exception->getLine(),
+            'environment' => app()->environment(),
+            'fingerprint' => $this->getFingerprint($exception),
+            'occurred_at' => now()->toIso8601String(),
+            'occurrences' => 1 + (int) Cache::pull($this->getHeldBackKey($exception), 0),
+        ];
+    }
+
     /**
-     * Identifies "the same error" so TaskBoard can group repeats on one bug.
+     * Identifies "the same error" so TaskBoard and the monitor can group repeats.
      * The message is left out because it often holds ids, and the path is
      * relative so a new release directory doesn't change the fingerprint.
      */
@@ -341,11 +405,28 @@ class ErrorReporterService
         }
     }
 
-    protected function sendToTaskBoard(array $payload): void
+    /**
+     * Returns the ticket's url and identifier, for the link in the Slack message.
+     */
+    protected function sendToTaskBoard(array $payload): ?array
+    {
+        $result = $this->postWithToken('TaskBoard', $this->taskBoardUrl, $this->taskBoardKey, $payload);
+
+        $ticket = $result === null ? null : json_decode($result, true);
+
+        return is_array($ticket) ? $ticket : null;
+    }
+
+    protected function sendToMonitor(array $payload): void
+    {
+        $this->postWithToken('Health Monitor', $this->monitorUrl, $this->monitorToken, $payload);
+    }
+
+    protected function postWithToken(string $channel, string $url, string $token, array $payload): ?string
     {
         $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 
-        $ch = curl_init($this->taskBoardUrl);
+        $ch = curl_init($url);
 
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
         curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
@@ -355,7 +436,7 @@ class ErrorReporterService
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'Accept: application/json',
-            "Authorization: Bearer {$this->taskBoardKey}",
+            "Authorization: Bearer {$token}",
             'Content-Length: ' . strlen($body),
         ]);
 
@@ -364,14 +445,18 @@ class ErrorReporterService
         $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
         if ($error) {
-            Log::error("cURL Error when sending to TaskBoard: {$error}");
+            Log::error("cURL Error when sending to {$channel}: {$error}");
 
-            return;
+            return null;
         }
 
         if ($status >= 400) {
-            Log::error("TaskBoard rejected the error notification ({$status}): " . substr((string) $result, 0, 500));
+            Log::error("{$channel} rejected the error notification ({$status}): " . substr((string) $result, 0, 500));
+
+            return null;
         }
+
+        return (string) $result;
     }
 
     protected function recordNotification(Throwable $exception): void
