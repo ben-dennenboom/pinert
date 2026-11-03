@@ -312,10 +312,10 @@ class ErrorReporterService
 
         $filtered = collect($data)->except($filterFields)->toArray();
 
-        $json = json_encode($filtered, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $json = json_encode($filtered, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
 
         if (strlen($json) > 1000) {
-            $json = substr($json, 0, 1000) . '... (truncated)';
+            $json = mb_strcut($json, 0, 1000, 'UTF-8') . '... (truncated)';
         }
 
         return $json;
@@ -323,21 +323,30 @@ class ErrorReporterService
 
     protected function sendToSlack(array $payload): void
     {
+        $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+
         $ch = curl_init($this->webhookUrl);
 
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
-            'Content-Length: ' . strlen(json_encode($payload)),
+            'Content-Length: ' . strlen($body),
         ]);
 
         $result = curl_exec($ch);
         $error = curl_error($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
         if ($error) {
             Log::error("cURL Error when sending to Slack: {$error}");
+
+            return;
+        }
+
+        if ($status >= 400) {
+            Log::error("Slack rejected the error notification ({$status}): " . substr((string) $result, 0, 500));
         }
     }
 
